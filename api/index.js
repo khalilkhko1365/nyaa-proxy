@@ -4,48 +4,41 @@ import { handle } from "hono/vercel";
 export const runtime = "edge";
 
 const app = new Hono();
+const port = process.env.PORT || 8000;
 const urlToProxy = process.env.PROXY_URL || "https://nyaa.si";
 const proxyRssPage = process.env.PROXY_RSS_PAGE === "true";
 
-// کلید اختصاصی خودت
-const AUTH_KEY = "Khko_Secure_2026";
-
+// Function to determine if the URL is an RSS feed
 const isRssFeedUrl = (url) => {
-	const rssFeedPattern = /page=rss/;
+	const rssFeedPattern = /page=rss/; // Basic pattern to identify RSS feeds
 	return rssFeedPattern.test(url);
 };
 
 // Proxy handler
-app.all("*", async (c) => {
-	const clientAuth = c.req.header("x-proxy-auth") || c.req.query("auth");
-
-	// قفل ضد ربات
-	if (clientAuth !== AUTH_KEY) {
-		return c.text("Forbidden: Unauthorized Bot Access", 403);
+app.all("/", async (c) => {
+	// فقط همین چک کردن ساده رمز:
+	const auth = c.req.header("x-proxy-auth") || c.req.query("auth");
+	if (auth !== "Khko_Secure_2026") {
+		return c.text("Forbidden", 403);
 	}
 
 	const url = new URL(c.req.url);
+	const targetUrl = new URL(urlToProxy + url.pathname + url.search);
 
-	// باگ اینجا بود: پاک کردن /api از ابتدای آدرس تا به Nyaa درست ارسال بشه
-	let cleanPath = url.pathname.replace(/^\/api/, "") || "/";
-	
-	// حذف auth از پارامترهایی که به Nyaa فرستاده میشن
-	const cleanSearch = new URLSearchParams(url.search);
-	cleanSearch.delete("auth");
-	const queryString = cleanSearch.toString() ? `?${cleanSearch.toString()}` : "";
-
-	const targetUrl = new URL(urlToProxy + cleanPath + queryString);
-
+	// Get the original request headers
 	const headers = new Headers();
 	c.req.raw.headers.forEach((value, key) => {
-		if (key.toLowerCase() !== "host" && key.toLowerCase() !== "x-proxy-auth") {
+		// Skip host header to avoid conflicts
+		if (key.toLowerCase() !== "host") {
 			headers.set(key, value);
 		}
 	});
 
+	// Set the correct host header for the target
 	headers.set("host", targetUrl.host);
 
 	try {
+		// Forward the request to the target server
 		const response = await fetch(targetUrl.toString(), {
 			method: c.req.method,
 			headers: headers,
@@ -55,8 +48,10 @@ app.all("*", async (c) => {
 					: undefined,
 		});
 
+		// Get response headers
 		const responseHeaders = new Headers();
 		response.headers.forEach((value, key) => {
+			// Skip some headers that might cause issues
 			if (
 				!["content-encoding", "content-length", "transfer-encoding"].includes(
 					key.toLowerCase(),
@@ -66,6 +61,7 @@ app.all("*", async (c) => {
 			}
 		});
 
+		// Handle RSS feed URL rewriting (commented out version from original)
 		if (proxyRssPage && isRssFeedUrl(c.req.url)) {
 			const responseText = await response.text();
 			const proxiedUrl = `${url.protocol}//${c.req.header("host")}`;
@@ -78,6 +74,7 @@ app.all("*", async (c) => {
 			});
 		}
 
+		// For non-RSS requests, just pass through the response
 		const responseBody = await response.arrayBuffer();
 
 		return new Response(responseBody, {
@@ -91,5 +88,5 @@ app.all("*", async (c) => {
 	}
 });
 
+// Export the Hono API
 export const GET = handle(app);
-export const POST = handle(app);
