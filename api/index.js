@@ -4,35 +4,43 @@ import { handle } from "hono/vercel";
 export const runtime = "edge";
 
 const app = new Hono();
-const port = process.env.PORT || 8000;
 const urlToProxy = process.env.PROXY_URL || "https://nyaa.si";
 const proxyRssPage = process.env.PROXY_RSS_PAGE === "true";
 
+// رمز اختصاصی خودت (می‌تونی تغییرش بدی)
+const AUTH_KEY = "Khko_Secure_2026";
+
 // Function to determine if the URL is an RSS feed
 const isRssFeedUrl = (url) => {
-	const rssFeedPattern = /page=rss/; // Basic pattern to identify RSS feeds
+	const rssFeedPattern = /page=rss/;
 	return rssFeedPattern.test(url);
 };
 
-// Proxy handler
-app.all("/", async (c) => {
+// Proxy handler - تمام روت‌ها بررسی می‌شوند
+app.all("*", async (c) => {
+	// بررسی قفل امنیتی: چک کردن هدر یا پارامتر auth
+	const clientAuth = c.req.header("x-proxy-auth") || c.req.query("auth");
+
+	if (clientAuth !== AUTH_KEY) {
+		return c.text("Forbidden: Unauthorized Bot Access", 403);
+	}
+
 	const url = new URL(c.req.url);
 	const targetUrl = new URL(urlToProxy + url.pathname + url.search);
 
-	// Get the original request headers
+	// حذف پارامتر auth از ارسالی به Nyaa (در صورت ارسال با query)
+	targetUrl.searchParams.delete("auth");
+
 	const headers = new Headers();
 	c.req.raw.headers.forEach((value, key) => {
-		// Skip host header to avoid conflicts
-		if (key.toLowerCase() !== "host") {
+		if (key.toLowerCase() !== "host" && key.toLowerCase() !== "x-proxy-auth") {
 			headers.set(key, value);
 		}
 	});
 
-	// Set the correct host header for the target
 	headers.set("host", targetUrl.host);
 
 	try {
-		// Forward the request to the target server
 		const response = await fetch(targetUrl.toString(), {
 			method: c.req.method,
 			headers: headers,
@@ -42,10 +50,8 @@ app.all("/", async (c) => {
 					: undefined,
 		});
 
-		// Get response headers
 		const responseHeaders = new Headers();
 		response.headers.forEach((value, key) => {
-			// Skip some headers that might cause issues
 			if (
 				!["content-encoding", "content-length", "transfer-encoding"].includes(
 					key.toLowerCase(),
@@ -55,7 +61,6 @@ app.all("/", async (c) => {
 			}
 		});
 
-		// Handle RSS feed URL rewriting (commented out version from original)
 		if (proxyRssPage && isRssFeedUrl(c.req.url)) {
 			const responseText = await response.text();
 			const proxiedUrl = `${url.protocol}//${c.req.header("host")}`;
@@ -68,7 +73,6 @@ app.all("/", async (c) => {
 			});
 		}
 
-		// For non-RSS requests, just pass through the response
 		const responseBody = await response.arrayBuffer();
 
 		return new Response(responseBody, {
@@ -84,3 +88,4 @@ app.all("/", async (c) => {
 
 // Export the Hono API
 export const GET = handle(app);
+export const POST = handle(app);
