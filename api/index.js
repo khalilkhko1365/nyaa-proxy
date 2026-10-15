@@ -7,29 +7,34 @@ const app = new Hono();
 const urlToProxy = process.env.PROXY_URL || "https://nyaa.si";
 const proxyRssPage = process.env.PROXY_RSS_PAGE === "true";
 
-// رمز اختصاصی خودت (می‌تونی تغییرش بدی)
+// کلید اختصاصی خودت
 const AUTH_KEY = "Khko_Secure_2026";
 
-// Function to determine if the URL is an RSS feed
 const isRssFeedUrl = (url) => {
 	const rssFeedPattern = /page=rss/;
 	return rssFeedPattern.test(url);
 };
 
-// Proxy handler - تمام روت‌ها بررسی می‌شوند
+// Proxy handler
 app.all("*", async (c) => {
-	// بررسی قفل امنیتی: چک کردن هدر یا پارامتر auth
 	const clientAuth = c.req.header("x-proxy-auth") || c.req.query("auth");
 
+	// قفل ضد ربات
 	if (clientAuth !== AUTH_KEY) {
 		return c.text("Forbidden: Unauthorized Bot Access", 403);
 	}
 
 	const url = new URL(c.req.url);
-	const targetUrl = new URL(urlToProxy + url.pathname + url.search);
 
-	// حذف پارامتر auth از ارسالی به Nyaa (در صورت ارسال با query)
-	targetUrl.searchParams.delete("auth");
+	// باگ اینجا بود: پاک کردن /api از ابتدای آدرس تا به Nyaa درست ارسال بشه
+	let cleanPath = url.pathname.replace(/^\/api/, "") || "/";
+	
+	// حذف auth از پارامترهایی که به Nyaa فرستاده میشن
+	const cleanSearch = new URLSearchParams(url.search);
+	cleanSearch.delete("auth");
+	const queryString = cleanSearch.toString() ? `?${cleanSearch.toString()}` : "";
+
+	const targetUrl = new URL(urlToProxy + cleanPath + queryString);
 
 	const headers = new Headers();
 	c.req.raw.headers.forEach((value, key) => {
@@ -86,6 +91,5 @@ app.all("*", async (c) => {
 	}
 });
 
-// Export the Hono API
 export const GET = handle(app);
 export const POST = handle(app);
