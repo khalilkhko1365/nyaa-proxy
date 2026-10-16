@@ -1,82 +1,62 @@
 // Modern ES Module version using native fetch and Web APIs
+// کلید امنیتی اختصاصی
+const AUTH_KEY = "Khko_Secure_2026";
+
 // Function to rewrite URLs in HTML content
 function rewriteUrls(html, originalDomain, proxyDomain) {
-	// Replace absolute URLs pointing to the original domain
 	html = html.replace(
 		new RegExp(originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
 		proxyDomain,
 	);
-
-	// Fix meta tags with URLs (like favicon, icons, etc.)
-	html = html.replace(
-		/(<meta[^>]*content=['"])\/([^'"]*?)(['"][^>]*>)/g,
-		"$1/$2$3",
-	);
-	html = html.replace(
-		/(<link[^>]*href=['"])\/([^'"]*?)(['"][^>]*>)/g,
-		"$1/$2$3",
-	);
-
-	// Fix CSS @import statements
-	html = html.replace(
-		/@import\s+url\(['"]?\/([^'"]*?)['"]?\)/g,
-		`@import url('/$1')`,
-	);
+	html = html.replace(/(<meta[^>]*content=['"])\/([^'"]*?)(['"][^>]*>)/g, "$1/$2$3");
+	html = html.replace(/(<link[^>]*href=['"])\/([^'"]*?)(['"][^>]*>)/g, "$1/$2$3");
+	html = html.replace(/@import\s+url\(['"]?\/([^'"]*?)['"]?\)/g, `@import url('/$1')`);
 	html = html.replace(/@import\s+['"]\/([^'"]*?)['"];/g, `@import '/$1';`);
-
-	// Fix CSS background images and other url() references in style attributes and CSS
 	html = html.replace(/url\(['"]?\/([^'"]*?)['"]?\)/g, `url('/$1')`);
-
-	// Fix form actions
 	html = html.replace(/(action=['"])\/([^'"]*?)(['"])/g, "$1/$2$3");
-
-	// Fix JavaScript URLs in onclick, etc.
-	html = html.replace(
-		/((?:window\.)?location\.href\s*=\s*['"])\/([^'"]*?)(['"])/g,
-		"$1/$2$3",
-	);
+	html = html.replace(/((?:window\.)?location\.href\s*=\s*['"])\/([^'"]*?)(['"])/g, "$1/$2$3");
 	html = html.replace(/((?:window\.)?open\(['"])\/([^'"]*?)(['"])/g, "$1/$2$3");
-
 	return html;
 }
 
 // Function to rewrite URLs in CSS content
 function rewriteCssUrls(css, originalDomain, proxyDomain) {
-	// Replace absolute URLs pointing to the original domain
 	css = css.replace(
 		new RegExp(originalDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
 		proxyDomain,
 	);
-
-	// Fix CSS @import statements
-	css = css.replace(
-		/@import\s+url\(['"]?\/([^'"]*?)['"]?\)/g,
-		`@import url('/$1')`,
-	);
+	css = css.replace(/@import\s+url\(['"]?\/([^'"]*?)['"]?\)/g, `@import url('/$1')`);
 	css = css.replace(/@import\s+['"]\/([^'"]*?)['"];/g, `@import '/$1';`);
-
-	// Fix CSS background images and other url() references
 	css = css.replace(/url\(['"]?\/([^'"]*?)['"]?\)/g, `url('/$1')`);
-
 	return css;
 }
 
 // Modern ES Module export with Web API
 export default async (req, context) => {
 	const url = new URL(req.url);
+
+	// ۱. بررسی قفل امنیتی ضد ربات
+	const clientAuth = url.searchParams.get("auth") || req.headers.get("x-proxy-auth");
+	if (clientAuth !== AUTH_KEY) {
+		return new Response("Forbidden: Bot Access Denied", {
+			status: 403,
+			headers: { "Content-Type": "text/plain" }
+		});
+	}
+
 	const path = url.pathname;
-	const queryParams = url.search;
+	
+	// حذف auth از پارامترهایی که به سمت Nyaa ارسال می‌شوند
+	url.searchParams.delete("auth");
+	const cleanQuery = url.searchParams.toString() ? `?${url.searchParams.toString()}` : "";
 
-	// Build the target URL
-	const urlToProxy = Netlify.env.get("PROXY_URL") || "https://nyaa.si";
-	const proxyRssPage = Netlify.env.get("PROXY_RSS_PAGE") === "true";
-	const targetUrl = `${urlToProxy}${path || "/"}${queryParams || ""}`;
+	const urlToProxy = (typeof Netlify !== "undefined" && Netlify.env ? Netlify.env.get("PROXY_URL") : process.env.PROXY_URL) || "https://nyaa.si";
+	const proxyRssPage = (typeof Netlify !== "undefined" && Netlify.env ? Netlify.env.get("PROXY_RSS_PAGE") : process.env.PROXY_RSS_PAGE) === "true";
+	const targetUrl = `${urlToProxy}${path || "/"}${cleanQuery}`;
 
-	// Get the current proxy URL (where this function is deployed)
 	const proxyUrl = `${url.protocol}//${req.headers.get("host")}`;
 
 	try {
-		// Add custom headers to appear more like a regular browser
 		const response = await fetch(targetUrl, {
 			method: req.method,
 			headers: {
@@ -88,7 +68,6 @@ export default async (req, context) => {
 				"Accept-Encoding": "gzip, deflate, br",
 				Connection: "keep-alive",
 				"Upgrade-Insecure-Requests": "1",
-				// Forward some original headers
 				...(req.headers.get("referer") && {
 					Referer: req.headers.get("referer"),
 				}),
@@ -99,12 +78,8 @@ export default async (req, context) => {
 
 		const contentType = response.headers.get("content-type") || "";
 
-		// Handle different content types
 		if (contentType.includes("text/html")) {
-			// For HTML content, rewrite URLs to go through proxy
 			let body = await response.text();
-
-			// Rewrite URLs in HTML to go through the proxy
 			body = rewriteUrls(body, urlToProxy, proxyUrl);
 
 			return new Response(body, {
@@ -117,10 +92,7 @@ export default async (req, context) => {
 				},
 			});
 		} else if (contentType.includes("text/css")) {
-			// For CSS content, also rewrite URLs
 			let body = await response.text();
-
-			// Rewrite URLs in CSS
 			body = rewriteCssUrls(body, urlToProxy, proxyUrl);
 
 			return new Response(body, {
@@ -132,7 +104,6 @@ export default async (req, context) => {
 				},
 			});
 		} else if (contentType.includes("application/xml")) {
-			// For XML content (like RSS), optionally rewrite URLs
 			let body = await response.text();
 			if (proxyRssPage) {
 				body = body.replaceAll(urlToProxy, proxyUrl);
@@ -147,14 +118,13 @@ export default async (req, context) => {
 				},
 			});
 		} else {
-			// For non-HTML/CSS content (images, JS, etc.), return as-is
 			const arrayBuffer = await response.arrayBuffer();
 
 			return new Response(arrayBuffer, {
 				status: response.status,
 				headers: {
 					"Content-Type": contentType,
-					"Cache-Control": "public, max-age=3600", // Cache assets longer
+					"Cache-Control": "public, max-age=3600",
 					"Access-Control-Allow-Origin": "*",
 				},
 			});
@@ -162,7 +132,6 @@ export default async (req, context) => {
 	} catch (error) {
 		console.error("Proxy error:", error);
 
-		// Return a more user-friendly error for rate limiting
 		if (
 			error.message &&
 			(error.message.includes("429") || error.message.includes("ECONNRESET"))
